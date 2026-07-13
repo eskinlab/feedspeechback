@@ -1,59 +1,54 @@
-# feedspeechback
+# feedspeechback — serverless MVP
 
-AI feedback on recorded speech. Upload an interview or job-meeting recording,
-get a scored evaluation report. Built on [Temporal](https://temporal.io/) —
-the pipeline (transcribe ∥ diarize → align → evaluate → report) runs as a
-durable workflow across dedicated workers.
+AI feedback on recorded speech, as one serverless GPU job:
 
-> Early stage: the pipeline wiring is real, the ML steps are stubs.
+```
+python cli.py  →  Nebius Serverless Job (WhisperX + pyannote)
+                        →  Nebius AI Studio LLM  →  report.md in the bucket
+```
 
-## Run
+```
+├── pyproject.toml     boto3 for the CLI; heavy job deps in the "job" group
+├── uv.lock
+├── Dockerfile         CUDA runtime + ffmpeg + uv sync --only-group job
+├── cli.py             laptop: submit / status / fetch
+│
+└── app/               runs inside the container (python -m app.main)
+    ├── main.py        entrypoint (argparse)
+    ├── pipeline.py    extract -> transcribe -> diarize -> metrics -> evaluate -> report
+    ├── config.py      all env-var knobs in one place
+    ├── media/
+    │   └── extractor.py    any audio/video -> 16 kHz mono WAV (ffmpeg)
+    ├── transcription/
+    │   └── whisperx.py     WhisperX transcribe + align
+    ├── diarization/
+    │   └── pyannote.py     speaker diarization (needs HF_TOKEN)
+    ├── metrics/
+    │   └── analyzer.py     wpm, pauses, talk-time share
+    ├── llm/
+    │   ├── client.py       Nebius AI Studio call
+    │   └── prompts.py      rubrics + prompt template
+    └── reporting/
+        └── markdown.py     report.md rendering
+```
+
+The Temporal-based pipeline lives on `main`.
+
+## Setup (once)
+
+1. Configure the `nebius` CLI; create an Object Storage bucket and S3 keys.
+2. Get a Nebius AI Studio API key and an HF token (accept the licenses for
+   `pyannote/speaker-diarization-3.1` and `pyannote/segmentation-3.0`).
+3. Build and push the image (from WSL or CI):
+   `docker build -t <registry>/feedspeechback-job:dev . && docker push <registry>/feedspeechback-job:dev`
+4. `cp .env.example .env`, fill it in, load it into your shell.
+
+## Use
 
 ```sh
-cp .env.example .env   # then edit the placeholder values
-docker compose up --build
+uv sync   # installs boto3 for the CLI (heavy job deps stay in Docker)
+
+uv run cli.py submit talk.wav --scenario interview   # prints <id>
+uv run cli.py status <id>                            # until it says done
+uv run cli.py fetch <id>                             # -> <id>-report.md
 ```
-
-| Service | URL |
-|---|---|
-| API | http://localhost:8001 |
-| Temporal UI | http://localhost:8081 |
-
-## API
-
-```sh
-# submit a recording for a scenario (interview or job-meeting)
-curl -X POST localhost:8001/interview \
-  -H "Content-Type: application/json" \
-  -d '{"audio_path": "meeting.wav"}'
-# -> {"workflow_id": "interview-meeting.wav"}
-
-# poll for the result
-curl localhost:8001/interview/interview-meeting.wav
-# -> {"status": "running"} ... then {"status": "completed", "result": {...}}
-```
-
-## Layout
-
-```
-src/feedspeechback/
-├── api/         FastAPI — HTTP surface
-├── workflows/   Temporal workflows (orchestration only)
-├── activities/  Temporal activities — thin, import-light adapters
-├── contracts/   Pydantic models crossing the workflow↔activity wire
-├── services/    business logic, framework-free (swappable providers)
-└── workers/     process entrypoints: default, transcription, diarization
-```
-
-Dependencies point one way: `workers/api → workflows → activities → services → contracts`.
-
-## Development
-
-```sh
-uv sync --all-groups   # install incl. dev tools
-uv run pytest          # first run downloads the Temporal test server
-uv run ruff check .
-uv run ruff format .
-```
-
-Configuration is via environment variables — see [.env.example](.env.example).

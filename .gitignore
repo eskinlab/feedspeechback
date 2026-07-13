@@ -18,3 +18,7 @@ wheels/
 
 # Claude Code local settings
 .claude/
+
+# Local test media
+data/
+out/
