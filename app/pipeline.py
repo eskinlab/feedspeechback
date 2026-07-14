@@ -32,5 +32,8 @@ def run(media_path: str, scenario: str, output_dir: str) -> Path:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     report_path = out_dir / "report.md"
-    shutil.move(tmp.name, report_path)
+    # copyfile, not move/copy2: S3 FUSE mounts reject the timestamp
+    # preservation that copy2 attempts after copying the content.
+    shutil.copyfile(tmp.name, report_path)
+    Path(tmp.name).unlink()
     return report_path
